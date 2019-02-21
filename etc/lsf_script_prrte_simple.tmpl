@@ -1,0 +1,41 @@
+#!/bin/bash
+# Begin LSF directives
+#BSUB -P PROJECT
+#BSUB -J dvm_simple
+#BSUB -o dvm_simple.out
+#BSUB -e dvm_simple.err
+#BSUB -W 00:10
+#BSUB -nnodes NNODES
+#BSUB -env "all"
+# End LSF directives and begin shell commands
+
+./get_list_hosts.pl
+
+T="$(date +%s)"
+
+echo "Starting DVM on NNODES nodes..." >> CONFIGLOG
+prte --prefix $PRRTE_DIR --report-uri prrteuri --hostfile ./DVM_HOSTS.txt &
+echo "DVM started" >> CONFIGLOG
+
+# We need to sleep to give time to prte to come up. It would be really beneficial to not have to do this.
+sleep 5
+
+echo "Running job with NP PEs..." >> CONFIGLOG
+prun --prefix $PRRTE_DIR -np NP hostname
+rc=$?
+if [ $rc -eq "0" ]
+then
+echo "Job succeeded: $rc."  >> CONFIGLOG
+echo 0 > result.log
+else
+echo "Job failed: $rc." >> CONFIGLOG
+echo 1 > result.log
+fi
+
+echo "Terminating DVM..." >> CONFIGLOG
+prun --prefix $PRRTE_DIR -terminate
+echo "DVM teminated" >> CONFIGLOG
+
+T="$(($(date +%s)-T))"
+echo "Total job runtime: $T seconds" >> CONFIGLOG
+
