@@ -21,7 +21,7 @@ echo "DVM started" >> CONFIGLOG
 sleep 5
 
 echo "Running job with NP PEs..." >> CONFIGLOG
-prun --prefix $PRRTE_DIR -np NP hostname
+prun --prefix $PRRTE_DIR -np NP BIN
 rc=$?
 if [ $rc -eq "0" ]
 then

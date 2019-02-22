@@ -7,6 +7,9 @@
 
 package Utils::Exec;
 
+use strict;
+use warnings "all";
+
 our @EXPORT_OK = qw(run_cmd
                     run_or_die);
 

@@ -24,6 +24,7 @@ my $np = undef;
 my $queue = "batch";
 my $resultfile = 0;
 my $output_dir = undef;
+my $experiment = undef;
 
 my $cmd = undef;
 
@@ -37,11 +38,22 @@ GetOptions (
 	"help"		=> \$help,
 	"resultfile"	=> \$resultfile,
 	"output-dir=s"  => \$output_dir,
+	"experiment=s"  => \$experiment,
 );
+
+# Based on where the script is, we figure out the path to all the required packages and scripts
+my $topDir = Cwd::abs_path(dirname (__FILE__)) . "/../..";
+my $topSrcDir = "$topDir/src";
+my $libDir = "$topDir/src/lib";
+my $binDir = "$topDir/src/bin";
+my $etcDir = "$topDir/etc";
+my $experimentsDir = "$etcDir/experiments";
+push (@INC, $libDir);
 
 if ($help)
 {
-	print "Usage: $0 --project <PROJECTID> --nnodes <NUMBER_NODES> --configlog <FILENAME> --np <NP> --output-dir <OUTPUT_DIR> [--queue <LSF_QUEUE>] [--verbose] [--help] [--resultfile]\n";
+	print "Usage: $0 --experiment <EXPERIMENT_NAME> --project <PROJECTID> --nnodes <NUMBER_NODES> --configlog <FILENAME> --np <NP> --output-dir <OUTPUT_DIR> [--queue <LSF_QUEUE>] [--verbose] [--help] [--resultfile]\n";
+	print "\t--experiment   Name of the experiment to run (all experiments are defined in $experimentsDir)\n";
 	print "\t--project	The LSF project to run the test\n";
 	print "\t--nnodes       How many nodes should be used for the test\n";
 	print "\t--configlog    Name of the file (not full path) where useful configuration data will be stored\n";
@@ -54,43 +66,58 @@ if ($help)
 	exit 0;
 }
 
+die "ERROR: undefined experiment" if (!defined ($experiment));
 die "ERROR: undefined project" if (!defined ($project));
 die "ERROR: invalid number of nodes" if (!defined ($nnodes) || $nnodes <= 0);
 die "ERROR: invalid config log" if (!defined ($configlog));
 die "ERROR: invalid number of PEs" if (!defined ($np) || $np <= 0);
 die "ERROR: invalid output directory" if (!defined ($output_dir));
 
-# Based on where the script is, we figure out the path to all the required packages and scripts
-my $topDir = Cwd::abs_path(dirname (__FILE__)) . "/../..";
-my $topSrcDir = "$topDir/src";
-my $libDir = "$topDir/src/lib";
-my $binDir = "$topDir/src/bin";
-push (@INC, $libDir);
-
 require "Runner/LSF.pm";
 require "Utils/Exec.pm";
 require "Utils/Fmt.pm";
 
+# Deal with the verbosity configuration
 my %verboseCfg;
 my $refVerbCfg = \%verboseCfg;
 $refVerbCfg = Utils::Fmt::set_verbosity ($refVerbCfg, $verbose);
 
-sub _generate_lsf_script ($$$$$)
+# Load the experiment configuration
+require "Utils/ConfParser.pm";
+my $experimentFile = "$experimentsDir/$experiment.conf";
+die "ERROR: cannot access $experimentFile" if (! -e $experimentFile);
+Utils::Fmt::vlogln ($refVerbCfg, "Loading configuration from $experimentFile");
+my $expCfgRef = Utils::ConfParser::load_config ($experimentFile);
+die "ERROR: cannot load the experiment configuration from $experimentFile" if (!defined $expCfgRef);
+my %expCfg = %$expCfgRef;
+
+my $bin = $expCfg{'bin'};
+my $oversubscribe = $expCfg{'oversubscribe'}; # Not used at the moment
+
+die "ERROR: Undefined binary" if (!defined ($bin));
+$oversubscribe = "false" if (!defined ($oversubscribe)); # By default, we do not oversubscribe on compute nodes
+
+sub _generate_lsf_script ($$$$$$)
 {
-	my ($_lsfscript, $_project, $_nnodes, $_configlog, $_np) = @_;
+	my ($_lsfscript, $_project, $_nnodes, $_configlog, $_np, $_bin) = @_;
 	my $_cmd;
 
+	# Switch from human-readable paths to regex friendly paths
 	my $_formatted_configlog_path = $_configlog;
 	$_formatted_configlog_path =~ s/\//\\\//g;
+	my $formatted_bin = $bin;
+	$formatted_bin =~ s/\//\\\//g;
 
 	$_cmd = "sed -i 's/PROJECT/$_project/g' $_lsfscript";
-	Utils::Exec::run_cmd ($refVerbCfg, $_cmd);
+	Utils::Exec::run_or_die ($refVerbCfg, $_cmd);
 	$_cmd = "sed -i 's/NNODES/$_nnodes/g' $_lsfscript";
-        Utils::Exec::run_cmd ($refVerbCfg, $_cmd);
+        Utils::Exec::run_or_die ($refVerbCfg, $_cmd);
 	$_cmd = "sed -i 's/CONFIGLOG/$_formatted_configlog_path/g' $_lsfscript";
-        Utils::Exec::run_cmd ($refVerbCfg, $_cmd);
+        Utils::Exec::run_or_die ($refVerbCfg, $_cmd);
 	$_cmd = "sed -i 's/NP/$_np/g' $_lsfscript";
-        Utils::Exec::run_cmd ($refVerbCfg, $_cmd);
+        Utils::Exec::run_or_die ($refVerbCfg, $_cmd);
+	$_cmd = "sed -i 's/BIN/$formatted_bin/g' $_lsfscript";
+	Utils::Exec::run_or_die ($refVerbCfg, $_cmd);
 }
 
 # Update the name of the config log to get the full path
@@ -108,7 +135,7 @@ $cmd = "cp -f $template_lsf_script $lsf_script";
 Utils::Exec::run_or_die ($refVerbCfg, $cmd);
 
 # Update the lsf script template
-_generate_lsf_script ($lsf_script, $project, $nnodes, $configlog, $np);
+_generate_lsf_script ($lsf_script, $project, $nnodes, $configlog, $np, $bin);
 
 # Submit the job
 $cmd = "bsub $lsf_script";
